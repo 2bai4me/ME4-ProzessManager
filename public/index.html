@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ME4 ProzessManager</title>
+<style>
+:root {
+  --bg: #0a0a0f;
+  --surface: #13131a;
+  --border: #1f1f2e;
+  --text: #d1d5db;
+  --dim: #6b7280;
+  --accent: #3b82f6;
+  --done: #22c55e;
+  --running: #f59e0b;
+  --ready: #3b82f6;
+  --todo: #6b7280;
+  --blocked: #ef4444;
+  --archived: #374151;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; }
+header { background: var(--surface); border-bottom: 1px solid var(--border); padding: 16px 24px; display: flex; align-items: center; gap: 16px; }
+header h1 { font-size: 1.25rem; font-weight: 700; }
+header .badge { font-size: 0.7rem; background: var(--accent); color: #fff; padding: 2px 8px; border-radius: 4px; }
+main { display: flex; height: calc(100vh - 57px); }
+
+/* Sidebar */
+.sidebar { width: 240px; background: var(--surface); border-right: 1px solid var(--border); padding: 16px; overflow-y: auto; }
+.sidebar h2 { font-size: 0.75rem; text-transform: uppercase; color: var(--dim); margin-bottom: 12px; letter-spacing: 0.05em; }
+.board-item { padding: 8px 12px; border-radius: 6px; cursor: pointer; font-size: 0.85rem; margin-bottom: 4px; transition: background 0.15s; }
+.board-item:hover { background: rgba(255,255,255,0.05); }
+.board-item.active { background: var(--accent); color: #fff; }
+.board-item .counts { font-size: 0.7rem; color: var(--dim); margin-top: 2px; }
+.board-item.active .counts { color: rgba(255,255,255,0.7); }
+.board-item.has-blocked { border-left: 3px solid var(--blocked); padding-left: 9px; }
+
+/* Pipeline */
+.content { flex: 1; overflow-y: auto; padding: 24px; display: flex; flex-direction: column; gap: 24px; }
+.pipeline { display: flex; gap: 12px; min-height: 400px; }
+.column { flex: 1; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; }
+.column h3 { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+.column h3 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.col-ready .dot { background: var(--ready); }
+.col-running .dot { background: var(--running); animation: pulse 1s infinite; }
+.col-done .dot { background: var(--done); }
+.col-blocked { border-color: rgba(239,68,68,0.3); background: rgba(239,68,68,0.03); }
+.col-blocked h3 { color: var(--blocked); }
+.col-blocked .dot { background: var(--blocked); animation: pulse 1s infinite; }
+.col-todo .dot { background: var(--todo); }
+@keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+/* Task Cards */
+.task-card { background: rgba(255,255,255,0.03); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 8px; font-size: 0.82rem; cursor: pointer; transition: all 0.2s; }
+.task-card:hover { border-color: var(--accent); background: rgba(59,130,246,0.08); transform: translateY(-1px); }
+.task-card .title { font-weight: 600; margin-bottom: 4px; }
+.task-card .meta { font-size: 0.7rem; color: var(--dim); display: flex; gap: 8px; align-items: center; }
+.task-card .blocked-reason { display: none; font-size: 0.72rem; color: var(--blocked); margin-top: 6px; padding: 6px 8px; background: rgba(239,68,68,0.08); border-radius: 4px; }
+.task-card.blocked { border: 1.5px solid var(--blocked); background: rgba(239,68,68,0.06); box-shadow: 0 0 12px rgba(239,68,68,0.1); animation: glowBlocked 2s infinite; }
+.task-card.blocked .blocked-reason { display: block; }
+.task-card.blocked .title { color: #fca5a5; }
+@keyframes glowBlocked { 0%,100%{box-shadow:0 0 8px rgba(239,68,68,0.1)} 50%{box-shadow:0 0 20px rgba(239,68,68,0.25)} }
+.task-card.running { border-left: 3px solid var(--running); }
+.task-card.done { border-left: 3px solid var(--done); opacity: 0.7; }
+.task-card .action-hint { display: none; font-size: 0.7rem; color: var(--accent); margin-top: 4px; }
+.task-card.blocked .action-hint { display: block; }
+
+.empty-state { text-align: center; color: var(--dim); padding: 40px; font-size: 0.85rem; flex: 1; display: flex; align-items: center; justify-content: center; }
+
+/* Decision Panel */
+.decision-overlay { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 100; align-items: center; justify-content: center; }
+.decision-overlay.visible { display: flex; }
+.decision-dialog { background: var(--surface); border: 1px solid var(--blocked); border-radius: 12px; padding: 24px; max-width: 500px; width: 90%; box-shadow: 0 0 40px rgba(239,68,68,0.2); }
+.decision-dialog h2 { font-size: 1rem; color: var(--blocked); margin-bottom: 8px; }
+.decision-dialog .task-title { font-size: 0.9rem; margin-bottom: 16px; }
+.decision-dialog .blocked-info { font-size: 0.8rem; color: var(--dim); background: rgba(239,68,68,0.05); padding: 10px; border-radius: 6px; margin-bottom: 16px; border-left: 3px solid var(--blocked); }
+.decision-dialog textarea { width: 100%; background: var(--bg); border: 1px solid var(--border); color: var(--text); padding: 12px; border-radius: 8px; font-size: 0.85rem; resize: vertical; min-height: 80px; font-family: inherit; }
+.decision-dialog textarea:focus { outline: none; border-color: var(--accent); }
+.decision-dialog .actions { display: flex; gap: 8px; margin-top: 16px; justify-content: flex-end; }
+.decision-dialog button { padding: 10px 20px; border-radius: 8px; font-weight: 600; font-size: 0.85rem; cursor: pointer; border: none; }
+.decision-dialog .btn-decide { background: var(--accent); color: #fff; }
+.decision-dialog .btn-decide:hover { background: #2563eb; }
+.decision-dialog .btn-cancel { background: transparent; border: 1px solid var(--border); color: var(--dim); }
+
+.refresh { font-size: 0.7rem; color: var(--dim); margin-left: auto; }
+
+/* Alert banner for blocked tasks */
+.alert-banner { background: rgba(239,68,68,0.1); border: 1px solid rgba(239,68,68,0.3); border-radius: 8px; padding: 12px 16px; display: none; align-items: center; gap: 12px; }
+.alert-banner.visible { display: flex; }
+.alert-banner .icon { font-size: 1.2rem; }
+.alert-banner .text { flex: 1; font-size: 0.85rem; }
+.alert-banner .count { background: var(--blocked); color: #fff; padding: 2px 8px; border-radius: 10px; font-size: 0.75rem; font-weight: 700; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>⚙️ ME4 ProzessManager</h1>
+  <span class="badge">v0.1</span>
+  <span class="refresh" id="refresh-indicator">🔄 live</span>
+</header>
+
+<main>
+  <aside class="sidebar" id="sidebar">
+    <h2>📋 Kanban Boards</h2>
+    <div id="board-list">Lade...</div>
+  </aside>
+
+  <section class="content" id="content">
+    <div class="alert-banner" id="alert-banner">
+      <span class="icon">⚠️</span>
+      <span class="text" id="alert-text"></span>
+      <span class="count" id="alert-count"></span>
+    </div>
+    <div class="pipeline" id="pipeline">
+      <div class="empty-state">👈 Wähle ein Board aus</div>
+    </div>
+  </section>
+</main>
+
+<div class="decision-overlay" id="decision-overlay">
+  <div class="decision-dialog">
+    <h2>⊘ Entscheidung erforderlich</h2>
+    <div class="task-title" id="dlg-task-title"></div>
+    <div class="blocked-info" id="dlg-blocked-info">Lade Blockierungsgrund...</div>
+    <label style="font-size:0.8rem;color:var(--dim);display:block;margin-bottom:8px;">Deine Entscheidung / Eingabe:</label>
+    <textarea id="dlg-input" placeholder="z.B. 'Option 1 umsetzen' oder 'Mit user_id als Key weitermachen'"></textarea>
+    <div class="actions">
+      <button class="btn-cancel" onclick="cancelDecision()">Abbrechen</button>
+      <button class="btn-decide" onclick="submitDecision()">✅ Entscheiden & Fortsetzen</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const API = '';
+let currentBoard = null;
+let decisionTaskId = null;
+
+const statusColumns = [
+  { key: 'todo', label: '📥 Todo', cls: 'col-todo' },
+  { key: 'ready', label: '▶ Ready', cls: 'col-ready' },
+  { key: 'running', label: '🔄 Running', cls: 'col-running' },
+  { key: 'blocked', label: '⊘ Blocked', cls: 'col-blocked' },
+  { key: 'done', label: '✅ Done', cls: 'col-done' },
+];
+
+async function loadBoards() {
+  const res = await fetch(API + '/api/boards');
+  const boards = await res.json();
+  const list = document.getElementById('board-list');
+  list.innerHTML = boards.map(b => `
+    <div class="board-item ${currentBoard === b.slug ? 'active' : ''} ${b.counts.includes('blocked') ? 'has-blocked' : ''}" onclick="selectBoard('${b.slug}')">
+      ${b.name}
+      <div class="counts">${b.counts || 'leer'}</div>
+    </div>
+  `).join('');
+}
+
+async function selectBoard(slug) {
+  currentBoard = slug;
+  await loadBoards();
+  await loadTasks();
+}
+
+async function loadTasks() {
+  if (!currentBoard) return;
+  
+  // Also get detailed info for blocked tasks
+  const res = await fetch(API + '/api/board/' + currentBoard + '/tasks');
+  const tasks = await res.json();
+  
+  // Get comments for blocked tasks to show reason
+  const blockedTasks = tasks.filter(t => t.status === 'blocked');
+  for (const t of blockedTasks) {
+    try {
+      const detailRes = await fetch(API + '/api/board/' + currentBoard + '/task/' + t.id);
+      const detail = await detailRes.json();
+      t.blockReason = detail.summary || 'Kein Grund angegeben';
+    } catch(e) { t.blockReason = '?'; }
+  }
+  
+  // Group by status
+  const grouped = {};
+  for (const col of statusColumns) grouped[col.key] = [];
+  for (const t of tasks) {
+    if (grouped[t.status]) grouped[t.status].push(t);
+  }
+  
+  // Alert banner for blocked
+  const blockedCount = grouped['blocked'].length;
+  const banner = document.getElementById('alert-banner');
+  if (blockedCount > 0) {
+    banner.classList.add('visible');
+    document.getElementById('alert-text').textContent = `${blockedCount} Task(s) warten auf deine Entscheidung!`;
+    document.getElementById('alert-count').textContent = blockedCount;
+  } else {
+    banner.classList.remove('visible');
+  }
+  
+  // Pipeline columns
+  const pipeline = document.getElementById('pipeline');
+  pipeline.innerHTML = statusColumns.map(col => `
+    <div class="column ${col.cls}">
+      <h3><span class="dot"></span> ${col.label} (${grouped[col.key].length})</h3>
+      ${grouped[col.key].map(t => `
+        <div class="task-card ${t.status}" onclick="${t.status === 'blocked' ? `openDecision('${t.id}','${t.title.replace(/'/g, "\\'")}','${(t.blockReason || '').replace(/'/g, "\\'").replace(/"/g, '&quot;')}')` : ''}">
+          <div class="title">${t.title}</div>
+          <div class="meta">
+            <span>👤 ${t.assignee}</span>
+            <span>${t.id.substring(0,10)}</span>
+          </div>
+          <div class="blocked-reason">💬 ${t.blockReason || ''}</div>
+          <div class="action-hint">👆 Klicken für Entscheidung</div>
+        </div>
+      `).join('') || '<div class="empty-state">—</div>'}
+    </div>
+  `).join('');
+
+  document.getElementById('refresh-indicator').textContent = '🔄 live • ' + new Date().toLocaleTimeString();
+}
+
+function openDecision(taskId, title, reason) {
+  decisionTaskId = taskId;
+  document.getElementById('dlg-task-title').textContent = title;
+  document.getElementById('dlg-blocked-info').textContent = reason || 'Blockiert — Grund unbekannt';
+  document.getElementById('dlg-input').value = '';
+  document.getElementById('decision-overlay').classList.add('visible');
+  setTimeout(() => document.getElementById('dlg-input').focus(), 100);
+}
+
+function cancelDecision() {
+  decisionTaskId = null;
+  document.getElementById('decision-overlay').classList.remove('visible');
+}
+
+async function submitDecision() {
+  const decision = document.getElementById('dlg-input').value.trim();
+  if (!decision || !decisionTaskId) return;
+  
+  const btn = document.querySelector('.btn-decide');
+  btn.textContent = '⏳ Sende...';
+  btn.disabled = true;
+  
+  try {
+    await fetch(API + '/api/board/' + currentBoard + '/task/' + decisionTaskId + '/decide', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({ decision })
+    });
+  } catch(e) { console.error(e); }
+  
+  cancelDecision();
+  btn.textContent = '✅ Entscheiden & Fortsetzen';
+  btn.disabled = false;
+  await loadTasks();
+}
+
+// Init
+loadBoards();
+setInterval(loadTasks, 5000);
+
+// Default: show test board
+setTimeout(() => selectBoard('testlauf-humansimmulation'), 300);
+</script>
+</body>
+</html>
